@@ -26,6 +26,7 @@ struct Decoder {
   std::deque<AVFrame*> frames;
   int windowWidth = 0;
   int windowHeight = 0;
+  int renderDiagnostics = 0;
 };
 
 void ClearFrames(Decoder* decoder) {
@@ -138,6 +139,13 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
   if (decoder == nullptr || surface == nullptr || decoder->frames.empty()) return JNI_FALSE;
   AVFrame* selected = nullptr;
   const int64_t due = position_us + late_us;
+  if (!decoder->frames.empty() && decoder->renderDiagnostics++ < 8) {
+    const AVFrame* front = decoder->frames.front();
+    __android_log_print(ANDROID_LOG_INFO, kTag,
+        "render clock positionUs=%lld dueUs=%lld frontPtsUs=%lld queued=%zu",
+        static_cast<long long>(position_us), static_cast<long long>(due),
+        static_cast<long long>(front->pts), decoder->frames.size());
+  }
   while (!decoder->frames.empty()) {
     AVFrame* frame = decoder->frames.front();
     if (frame->pts != AV_NOPTS_VALUE && frame->pts > due) break;

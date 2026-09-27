@@ -96,7 +96,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
           throw new IllegalStateException("Invalid or oversized MPEG-4 sample");
         }
         int decoded = nativeDecode(decoder, bytes, bytes.position(), bytes.remaining(),
-            sampleBuffer.timeUs + getStreamOffsetUs());
+            sampleBuffer.timeUs);
         if (decoded < 0) throw new IllegalStateException("FFmpeg MPEG-4 decode failed: " + decoded);
         if (++sampleCount <= 4) {
           Log.i(TAG, "sample=" + sampleCount + " bytes=" + bytes.remaining()
@@ -140,7 +140,8 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
     if (surface == null || decoder == 0) return;
     boolean rendered = nativeRenderFrame(decoder, surface, positionUs, 35_000);
     if (renderAttemptCount++ == 0) {
-      Log.i(TAG, "render started surface=" + surface.isValid() + " queued=" + nativeHasFrames(decoder));
+      Log.i(TAG, "render started surface=" + surface.isValid() + " queued="
+          + nativeHasFrames(decoder) + " positionUs=" + positionUs);
     }
     if (rendered && !renderedFirstFrame) {
       renderedFirstFrame = true;
