@@ -184,7 +184,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
   if (!decoder->surfaceConfigured || decoder->surfaceWidth != selected->width
       || decoder->surfaceHeight != selected->height) {
     const int geometry_result = ANativeWindow_setBuffersGeometry(
-        window, selected->width, selected->height, WINDOW_FORMAT_RGBA_8888);
+        window, selected->width, selected->height, WINDOW_FORMAT_RGB_565);
     if (geometry_result != 0) {
       __android_log_print(ANDROID_LOG_ERROR, kTag,
           "setBuffersGeometry(%dx%d) failed: %d",
