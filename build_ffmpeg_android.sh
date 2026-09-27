@@ -23,7 +23,7 @@ for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
   case "$ABI" in
     arm64-v8a) ARCH=aarch64; CPU=armv8-a; PREFIX=aarch64-linux-android ;;
     armeabi-v7a) ARCH=arm; CPU=armv7-a; PREFIX=armv7a-linux-androideabi ;;
-    x86) ARCH=x86; CPU=i686; PREFIX=i686-linux-android; ARCH_CONFIG+=(--disable-x86asm) ;;
+    x86) ARCH=x86; CPU=i686; PREFIX=i686-linux-android; ARCH_CONFIG+=(--disable-x86asm --disable-inline-asm) ;;
     x86_64) ARCH=x86_64; CPU=x86-64; PREFIX=x86_64-linux-android ;;
   esac
   BUILD="$ROOT/.build/$ABI"
