@@ -19,10 +19,11 @@ if [[ ! -d "$SOURCE" ]]; then
   git clone --depth 1 --branch "n$FFMPEG_VERSION" https://github.com/FFmpeg/FFmpeg.git "$SOURCE"
 fi
 for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
+  ARCH_CONFIG=()
   case "$ABI" in
     arm64-v8a) ARCH=aarch64; CPU=armv8-a; PREFIX=aarch64-linux-android ;;
     armeabi-v7a) ARCH=arm; CPU=armv7-a; PREFIX=armv7a-linux-androideabi ;;
-    x86) ARCH=x86; CPU=i686; PREFIX=i686-linux-android ;;
+    x86) ARCH=x86; CPU=i686; PREFIX=i686-linux-android; ARCH_CONFIG+=(--disable-x86asm) ;;
     x86_64) ARCH=x86_64; CPU=x86-64; PREFIX=x86_64-linux-android ;;
   esac
   BUILD="$ROOT/.build/$ABI"
@@ -45,7 +46,8 @@ for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
     --disable-avdevice --disable-avfilter --disable-network --disable-autodetect \
     --disable-gpl --disable-nonfree --disable-symver --enable-small \
     --enable-decoder=mpeg4 --enable-parser=mpeg4video --enable-swscale \
-    --extra-cflags='-O2 -fPIC -DANDROID' --extra-ldflags='-Wl,-z,max-page-size=16384'
+    --extra-cflags='-O2 -fPIC -DANDROID' --extra-ldflags='-Wl,-z,max-page-size=16384' \
+    "${ARCH_CONFIG[@]}"
   make -j2
   make install
   rm -rf "$ROOT/decoder/src/main/ffmpeg-headers"/*
