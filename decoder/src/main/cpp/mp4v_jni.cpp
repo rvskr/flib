@@ -131,6 +131,16 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeHasFrames(JNIEnv*, j
   return decoder != nullptr && !decoder->frames.empty();
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeResetRenderDiagnostics(
+    JNIEnv*, jclass, jlong handle) {
+  auto* decoder = reinterpret_cast<Decoder*>(handle);
+  if (decoder != nullptr) {
+    decoder->renderDiagnostics = 0;
+    decoder->surfaceDiagnostics = 0;
+  }
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     JNIEnv* env, jclass, jlong handle, jobject surface, jlong position_us, jlong late_us) {

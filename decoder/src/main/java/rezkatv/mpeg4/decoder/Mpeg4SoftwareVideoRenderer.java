@@ -140,10 +140,12 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   private void renderAvailableFrame(long positionUs) {
     if (surface == null || decoder == 0) return;
     boolean rendered = nativeRenderFrame(decoder, surface, positionUs, 35_000);
-    if (renderAttemptCount++ == 0) {
-      Log.i(TAG, "render started surface=" + surface.isValid() + " queued="
-          + nativeHasFrames(decoder) + " positionUs=" + positionUs);
+    if (renderAttemptCount < 3) {
+      Log.i(TAG, "surface render attempt=" + (renderAttemptCount + 1) + " rendered=" + rendered
+          + " valid=" + surface.isValid() + " queued=" + nativeHasFrames(decoder)
+          + " positionUs=" + positionUs);
     }
+    renderAttemptCount++;
     if (rendered && !renderedFirstFrame) {
       renderedFirstFrame = true;
       Log.i(TAG, "first frame rendered at positionUs=" + positionUs);
@@ -163,6 +165,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
       renderAttemptCount = 0;
       renderedFirstFrame = false;
       Log.i(TAG, "video output=" + (surface == null ? "null" : "Surface(valid=" + surface.isValid() + ")"));
+      if (decoder != 0) nativeResetRenderDiagnostics(decoder);
     }
   }
 
@@ -216,6 +219,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   private static native void nativeSignalEndOfStream(long decoder);
   private static native void nativeFlush(long decoder);
   private static native boolean nativeHasFrames(long decoder);
+  private static native void nativeResetRenderDiagnostics(long decoder);
   private static native boolean nativeRenderFrame(long decoder, Surface surface, long positionUs, long lateUs);
   private static native void nativeRelease(long decoder);
 }
