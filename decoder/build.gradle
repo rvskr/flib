@@ -30,5 +30,6 @@ android {
 }
 
 dependencies {
+    api 'androidx.annotation:annotation:1.9.1'
     api 'androidx.media3:media3-exoplayer:1.11.1'
 }
