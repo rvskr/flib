@@ -27,6 +27,7 @@ import java.util.List;
 public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   private static final String TAG = "Mpeg4VideoRenderer";
   private static final int MAX_SAMPLES_PER_RENDER = 4;
+  private static final int MAX_QUEUED_DECODE_FRAMES = 4;
   private static final int MAX_SAMPLE_BYTES = 8 * 1024 * 1024;
 
   static { System.loadLibrary("rezka_mp4v"); }
@@ -74,7 +75,8 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   public void render(long positionUs, long elapsedRealtimeUs) throws ExoPlaybackException {
     if (outputEnded) return;
     try {
-      for (int i = 0; i < MAX_SAMPLES_PER_RENDER && !inputEnded; i++) {
+      for (int i = 0; i < MAX_SAMPLES_PER_RENDER && !inputEnded
+          && nativeGetQueuedFrames(decoder) < MAX_QUEUED_DECODE_FRAMES; i++) {
         FormatHolder holder = getFormatHolder();
         sampleBuffer.clear();
         int result = readSource(holder, sampleBuffer, 0);
@@ -219,6 +221,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   private static native void nativeSignalEndOfStream(long decoder);
   private static native void nativeFlush(long decoder);
   private static native boolean nativeHasFrames(long decoder);
+  private static native int nativeGetQueuedFrames(long decoder);
   private static native void nativeResetRenderDiagnostics(long decoder);
   private static native boolean nativeRenderFrame(long decoder, Surface surface, long positionUs, long lateUs);
   private static native void nativeRelease(long decoder);
