@@ -148,14 +148,24 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
   if (selected == nullptr) return JNI_FALSE;
 
   ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
-  if (window == nullptr) { av_frame_free(&selected); return JNI_FALSE; }
+  if (window == nullptr) {
+    __android_log_print(ANDROID_LOG_ERROR, kTag, "ANativeWindow_fromSurface failed");
+    av_frame_free(&selected);
+    return JNI_FALSE;
+  }
   if (decoder->windowWidth != selected->width || decoder->windowHeight != selected->height) {
-    ANativeWindow_setBuffersGeometry(window, selected->width, selected->height, WINDOW_FORMAT_RGBA_8888);
-    decoder->windowWidth = selected->width;
-    decoder->windowHeight = selected->height;
+    const int geometry_result = ANativeWindow_setBuffersGeometry(
+        window, selected->width, selected->height, WINDOW_FORMAT_RGBA_8888);
+    if (geometry_result == 0) {
+      decoder->windowWidth = selected->width;
+      decoder->windowHeight = selected->height;
+    } else {
+      __android_log_print(ANDROID_LOG_ERROR, kTag, "setBuffersGeometry failed: %d", geometry_result);
+    }
   }
   ANativeWindow_Buffer buffer{};
   int result = ANativeWindow_lock(window, &buffer, nullptr);
+  int converted_rows = 0;
   if (result == 0) {
     decoder->scaler = sws_getCachedContext(decoder->scaler,
         selected->width, selected->height, static_cast<AVPixelFormat>(selected->format),
@@ -163,13 +173,18 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     if (decoder->scaler != nullptr) {
       uint8_t* dst[4] = {static_cast<uint8_t*>(buffer.bits), nullptr, nullptr, nullptr};
       int stride[4] = {buffer.stride * 4, 0, 0, 0};
-      sws_scale(decoder->scaler, selected->data, selected->linesize, 0, selected->height, dst, stride);
+      converted_rows = sws_scale(
+          decoder->scaler, selected->data, selected->linesize, 0, selected->height, dst, stride);
+    } else {
+      __android_log_print(ANDROID_LOG_ERROR, kTag, "sws_getCachedContext failed");
     }
     ANativeWindow_unlockAndPost(window);
+  } else {
+    __android_log_print(ANDROID_LOG_ERROR, kTag, "ANativeWindow_lock failed: %d", result);
   }
   ANativeWindow_release(window);
   av_frame_free(&selected);
-  return result == 0 ? JNI_TRUE : JNI_FALSE;
+  return result == 0 && converted_rows > 0 ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -1,12 +1,15 @@
 package rezkatv.mpeg4.decoder;
 
 import android.os.Handler;
+import android.os.SystemClock;
 import android.view.Surface;
+import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
+import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.decoder.DecoderInputBuffer;
 import androidx.media3.exoplayer.BaseRenderer;
@@ -38,6 +41,9 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   @Nullable private Surface surface;
   private boolean inputEnded;
   private boolean outputEnded;
+  private int sampleCount;
+  private int renderAttemptCount;
+  private boolean renderedFirstFrame;
 
   public Mpeg4SoftwareVideoRenderer(
       long allowedJoiningTimeMs,
@@ -52,6 +58,9 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   @Override
   public int supportsFormat(Format candidate) {
     if (!MimeTypes.VIDEO_MP4V.equals(candidate.sampleMimeType)) {
+      if (MimeTypes.isVideo(candidate.sampleMimeType)) {
+        Log.i(TAG, "unsupported video MIME: " + candidate.sampleMimeType);
+      }
       return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE);
     }
     if (candidate.cryptoType != C.CRYPTO_TYPE_NONE) {
@@ -65,7 +74,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   public void render(long positionUs, long elapsedRealtimeUs) throws ExoPlaybackException {
     if (outputEnded) return;
     try {
-      if (surface != null) nativeRenderFrame(decoder, surface, positionUs, 35_000);
+      renderAvailableFrame(positionUs);
       for (int i = 0; i < MAX_SAMPLES_PER_RENDER && !inputEnded; i++) {
         FormatHolder holder = getFormatHolder();
         sampleBuffer.clear();
@@ -89,7 +98,11 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
         int decoded = nativeDecode(decoder, bytes, bytes.position(), bytes.remaining(),
             sampleBuffer.timeUs + getStreamOffsetUs());
         if (decoded < 0) throw new IllegalStateException("FFmpeg MPEG-4 decode failed: " + decoded);
-        if (surface != null) nativeRenderFrame(decoder, surface, positionUs, 35_000);
+        if (++sampleCount <= 4) {
+          Log.i(TAG, "sample=" + sampleCount + " bytes=" + bytes.remaining()
+              + " ptsUs=" + sampleBuffer.timeUs + " decodedFramesQueued=" + nativeHasFrames(decoder));
+        }
+        renderAvailableFrame(positionUs);
       }
       outputEnded = inputEnded && !nativeHasFrames(decoder);
     } catch (Exception e) {
@@ -98,6 +111,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   }
 
   private void onSampleFormatChanged(@Nullable Format newFormat) throws ExoPlaybackException {
+    long initStartMs = SystemClock.elapsedRealtime();
     format = newFormat;
     if (format == null || !MimeTypes.VIDEO_MP4V.equals(format.sampleMimeType)) {
       throw createRendererException(new IllegalArgumentException("Unexpected video format"),
@@ -110,6 +124,29 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
       throw createRendererException(new IllegalStateException("FFmpeg mpeg4 decoder unavailable"),
           format, PlaybackException.ERROR_CODE_DECODER_INIT_FAILED);
     }
+    events.inputFormatChanged(format, null);
+    events.decoderInitialized("FFmpeg mpeg4 (software)", SystemClock.elapsedRealtime(),
+        SystemClock.elapsedRealtime() - initStartMs);
+    if (format.width > 0 && format.height > 0) {
+      events.videoSizeChanged(new VideoSize(format.width, format.height, format.pixelWidthHeightRatio));
+    }
+    sampleCount = 0;
+    Log.i(TAG, "configured mime=" + format.sampleMimeType + " size=" + format.width + "x"
+        + format.height + " decoder=" + decoder + " initData="
+        + (extraData == null ? 0 : extraData.length));
+  }
+
+  private void renderAvailableFrame(long positionUs) {
+    if (surface == null || decoder == 0) return;
+    boolean rendered = nativeRenderFrame(decoder, surface, positionUs, 35_000);
+    if (renderAttemptCount++ == 0) {
+      Log.i(TAG, "render started surface=" + surface.isValid() + " queued=" + nativeHasFrames(decoder));
+    }
+    if (rendered && !renderedFirstFrame) {
+      renderedFirstFrame = true;
+      Log.i(TAG, "first frame rendered at positionUs=" + positionUs);
+      events.renderedFirstFrame(surface);
+    }
   }
 
   @Override public boolean isReady() {
@@ -121,6 +158,9 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   @Override public void handleMessage(int messageType, @Nullable Object message) {
     if (messageType == MSG_SET_VIDEO_OUTPUT) {
       surface = message instanceof Surface ? (Surface) message : null;
+      renderAttemptCount = 0;
+      renderedFirstFrame = false;
+      Log.i(TAG, "video output=" + (surface == null ? "null" : "Surface(valid=" + surface.isValid() + ")"));
     }
   }
 
@@ -131,7 +171,11 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   @Override protected void onStreamChanged(
       Format[] formats, long startPositionUs, long offsetUs, MediaSource.MediaPeriodId mediaPeriodId)
       throws ExoPlaybackException {
-    if (formats.length > 0) onSampleFormatChanged(formats[0]);
+    if (formats.length > 0) {
+      Log.i(TAG, "stream changed mime=" + formats[0].sampleMimeType + " size="
+          + formats[0].width + "x" + formats[0].height + " offsetUs=" + offsetUs);
+      onSampleFormatChanged(formats[0]);
+    }
   }
 
   @Override protected void onPositionReset(long positionUs, boolean joining,
@@ -139,6 +183,8 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
     inputEnded = false;
     outputEnded = false;
     if (decoder != 0) nativeFlush(decoder);
+    sampleCount = 0;
+    renderedFirstFrame = false;
   }
 
   @Override protected void onDisabled() {
