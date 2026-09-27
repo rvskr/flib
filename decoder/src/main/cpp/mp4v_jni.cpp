@@ -24,9 +24,8 @@ struct Decoder {
   AVCodecContext* context = nullptr;
   SwsContext* scaler = nullptr;
   std::deque<AVFrame*> frames;
-  int windowWidth = 0;
-  int windowHeight = 0;
   int renderDiagnostics = 0;
+  int surfaceDiagnostics = 0;
 };
 
 void ClearFrames(Decoder* decoder) {
@@ -161,32 +160,58 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     av_frame_free(&selected);
     return JNI_FALSE;
   }
-  if (decoder->windowWidth != selected->width || decoder->windowHeight != selected->height) {
-    const int geometry_result = ANativeWindow_setBuffersGeometry(
-        window, selected->width, selected->height, WINDOW_FORMAT_RGBA_8888);
-    if (geometry_result == 0) {
-      decoder->windowWidth = selected->width;
-      decoder->windowHeight = selected->height;
-    } else {
-      __android_log_print(ANDROID_LOG_ERROR, kTag, "setBuffersGeometry failed: %d", geometry_result);
-    }
-  }
   ANativeWindow_Buffer buffer{};
   int result = ANativeWindow_lock(window, &buffer, nullptr);
   int converted_rows = 0;
   if (result == 0) {
-    decoder->scaler = sws_getCachedContext(decoder->scaler,
-        selected->width, selected->height, static_cast<AVPixelFormat>(selected->format),
-        buffer.width, buffer.height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
-    if (decoder->scaler != nullptr) {
-      uint8_t* dst[4] = {static_cast<uint8_t*>(buffer.bits), nullptr, nullptr, nullptr};
-      int stride[4] = {buffer.stride * 4, 0, 0, 0};
-      converted_rows = sws_scale(
-          decoder->scaler, selected->data, selected->linesize, 0, selected->height, dst, stride);
-    } else {
-      __android_log_print(ANDROID_LOG_ERROR, kTag, "sws_getCachedContext failed");
+    AVPixelFormat output_format;
+    int bytes_per_pixel;
+    switch (buffer.format) {
+      case WINDOW_FORMAT_RGBA_8888:
+        output_format = AV_PIX_FMT_RGBA;
+        bytes_per_pixel = 4;
+        break;
+      case WINDOW_FORMAT_RGBX_8888:
+        output_format = AV_PIX_FMT_RGB0;
+        bytes_per_pixel = 4;
+        break;
+      case WINDOW_FORMAT_RGB_565:
+        output_format = AV_PIX_FMT_RGB565LE;
+        bytes_per_pixel = 2;
+        break;
+      default:
+        __android_log_print(ANDROID_LOG_ERROR, kTag,
+            "unsupported ANativeWindow buffer format=%d", buffer.format);
+        ANativeWindow_unlockAndPost(window);
+        result = AVERROR(EINVAL);
+        output_format = AV_PIX_FMT_NONE;
+        bytes_per_pixel = 0;
+        break;
     }
-    ANativeWindow_unlockAndPost(window);
+    if (result == 0) {
+      if (decoder->surfaceDiagnostics++ < 3) {
+        __android_log_print(ANDROID_LOG_INFO, kTag,
+            "locked surface buffer=%dx%d stride=%d format=%d",
+            buffer.width, buffer.height, buffer.stride, buffer.format);
+      }
+      decoder->scaler = sws_getCachedContext(decoder->scaler,
+          selected->width, selected->height, static_cast<AVPixelFormat>(selected->format),
+          buffer.width, buffer.height, output_format, SWS_BILINEAR, nullptr, nullptr, nullptr);
+      if (decoder->scaler != nullptr) {
+        uint8_t* dst[4] = {static_cast<uint8_t*>(buffer.bits), nullptr, nullptr, nullptr};
+        int stride[4] = {buffer.stride * bytes_per_pixel, 0, 0, 0};
+        converted_rows = sws_scale(
+            decoder->scaler, selected->data, selected->linesize, 0, selected->height, dst, stride);
+      } else {
+        __android_log_print(ANDROID_LOG_ERROR, kTag, "sws_getCachedContext failed");
+      }
+      const int post_result = ANativeWindow_unlockAndPost(window);
+      if (post_result != 0) {
+        __android_log_print(ANDROID_LOG_ERROR, kTag,
+            "ANativeWindow_unlockAndPost failed: %d", post_result);
+      }
+      result = post_result;
+    }
   } else {
     __android_log_print(ANDROID_LOG_ERROR, kTag, "ANativeWindow_lock failed: %d", result);
   }

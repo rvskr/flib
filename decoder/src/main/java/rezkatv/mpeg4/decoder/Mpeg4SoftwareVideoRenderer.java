@@ -74,7 +74,6 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   public void render(long positionUs, long elapsedRealtimeUs) throws ExoPlaybackException {
     if (outputEnded) return;
     try {
-      renderAvailableFrame(positionUs);
       for (int i = 0; i < MAX_SAMPLES_PER_RENDER && !inputEnded; i++) {
         FormatHolder holder = getFormatHolder();
         sampleBuffer.clear();
@@ -102,8 +101,10 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
           Log.i(TAG, "sample=" + sampleCount + " bytes=" + bytes.remaining()
               + " ptsUs=" + sampleBuffer.timeUs + " decodedFramesQueued=" + nativeHasFrames(decoder));
         }
-        renderAvailableFrame(positionUs);
       }
+      // Decode a small batch, then publish at most one frame. Posting after every
+      // packet can flood TextureView's BufferQueue when AVI timestamps are late.
+      renderAvailableFrame(positionUs);
       outputEnded = inputEnded && !nativeHasFrames(decoder);
     } catch (Exception e) {
       throw createRendererException(e, format, PlaybackException.ERROR_CODE_DECODING_FAILED);
