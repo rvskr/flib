@@ -33,7 +33,7 @@ jobs:
           sudo apt-get install --yes git make nasm patchelf
 
       - name: Install Android SDK and NDK
-        run: sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
       - name: Build minimal FFmpeg shared libraries
         run: bash build_ffmpeg_android.sh
