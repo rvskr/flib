@@ -7,7 +7,7 @@ Part 2 (`video/mp4v-es`) and builds shared FFmpeg libraries for `arm64-v8a`,
 ## Build
 
 Run the **Build MPEG-4 Part 2 decoder** workflow from the Actions tab, or build
-locally with JDK 17+, Android SDK platform 35, NDK `27.2.12479018`, CMake 3.22.1,
+locally with JDK 17+, Android SDK platform 36, NDK `27.2.12479018`, CMake 3.22.1,
 `make`, `nasm`, and `patchelf`:
 
 ```bash
