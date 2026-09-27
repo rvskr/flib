@@ -26,6 +26,9 @@ struct Decoder {
   std::deque<AVFrame*> frames;
   int renderDiagnostics = 0;
   int surfaceDiagnostics = 0;
+  bool surfaceConfigured = false;
+  int surfaceWidth = 0;
+  int surfaceHeight = 0;
 };
 
 void ClearFrames(Decoder* decoder) {
@@ -145,6 +148,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeResetRenderDiagnosti
   if (decoder != nullptr) {
     decoder->renderDiagnostics = 0;
     decoder->surfaceDiagnostics = 0;
+    decoder->surfaceConfigured = false;
   }
 }
 
@@ -176,6 +180,25 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     __android_log_print(ANDROID_LOG_ERROR, kTag, "ANativeWindow_fromSurface failed");
     av_frame_free(&selected);
     return JNI_FALSE;
+  }
+  if (!decoder->surfaceConfigured || decoder->surfaceWidth != selected->width
+      || decoder->surfaceHeight != selected->height) {
+    const int geometry_result = ANativeWindow_setBuffersGeometry(
+        window, selected->width, selected->height, WINDOW_FORMAT_RGBA_8888);
+    if (geometry_result != 0) {
+      __android_log_print(ANDROID_LOG_ERROR, kTag,
+          "setBuffersGeometry(%dx%d) failed: %d",
+          selected->width, selected->height, geometry_result);
+      ANativeWindow_release(window);
+      av_frame_free(&selected);
+      return JNI_FALSE;
+    }
+    decoder->surfaceWidth = selected->width;
+    decoder->surfaceHeight = selected->height;
+    decoder->surfaceConfigured = true;
+    __android_log_print(ANDROID_LOG_INFO, kTag,
+        "configured surface buffer to decoded size %dx%d",
+        selected->width, selected->height);
   }
   ANativeWindow_Buffer buffer{};
   int result = ANativeWindow_lock(window, &buffer, nullptr);
