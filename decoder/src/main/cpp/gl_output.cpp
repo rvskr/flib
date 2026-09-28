@@ -1,6 +1,7 @@
 #include "gl_output.h"
 
 #include <android/log.h>
+#include <android/native_window_jni.h>
 #include <chrono>
 
 namespace {
