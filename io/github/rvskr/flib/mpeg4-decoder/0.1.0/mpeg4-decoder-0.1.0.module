@@ -1,0 +1,124 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "io.github.rvskr.flib",
+    "module": "mpeg4-decoder",
+    "version": "0.1.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.6.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.annotation",
+          "module": "annotation",
+          "version": {
+            "requires": "1.9.1"
+          }
+        },
+        {
+          "group": "androidx.media3",
+          "module": "media3-exoplayer",
+          "version": {
+            "requires": "1.11.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.2.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "mpeg4-decoder-0.1.0.aar",
+          "url": "mpeg4-decoder-0.1.0.aar",
+          "size": 2900550,
+          "sha512": "f698a9045fe947daaa9bbf0ec6366b68ada54db61df51e56f4b54ba57b4f99ef0a559fb29235ae3b3c02cc24db93fa5c1c974737e5db12fa065783f06c613452",
+          "sha256": "ccea96531b0273713b0a6eea94775a543716b8a911483f3a5b0b0c55d1c3e9b0",
+          "sha1": "c627c3857641d1923cfe060eef99bbfcccaa2f33",
+          "md5": "3b7765d7e63da580f60da8e324e08d03"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.annotation",
+          "module": "annotation",
+          "version": {
+            "requires": "1.9.1"
+          }
+        },
+        {
+          "group": "androidx.media3",
+          "module": "media3-exoplayer",
+          "version": {
+            "requires": "1.11.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.2.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "mpeg4-decoder-0.1.0.aar",
+          "url": "mpeg4-decoder-0.1.0.aar",
+          "size": 2900550,
+          "sha512": "f698a9045fe947daaa9bbf0ec6366b68ada54db61df51e56f4b54ba57b4f99ef0a559fb29235ae3b3c02cc24db93fa5c1c974737e5db12fa065783f06c613452",
+          "sha256": "ccea96531b0273713b0a6eea94775a543716b8a911483f3a5b0b0c55d1c3e9b0",
+          "sha1": "c627c3857641d1923cfe060eef99bbfcccaa2f33",
+          "md5": "3b7765d7e63da580f60da8e324e08d03"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "mpeg4-decoder-0.1.0-sources.jar",
+          "url": "mpeg4-decoder-0.1.0-sources.jar",
+          "size": 5742,
+          "sha512": "cb6bc2032f52b9ea3621d1a847b1061dcfafd77ec30acf4ed74ae0180e2ddb4aa74fc6498337b220a8fa0fcd50fb35c65d008c99c03dc88746cc724990aa4685",
+          "sha256": "eb23d4d2fe053689b8e8b677ecd6a0c5e287bed1af4fead960162788be781fee",
+          "sha1": "9fea6e252fe36db83ca1c3b47453773310b5e955",
+          "md5": "85e4c5dbb31ba0343a9fb64790b9b522"
+        }
+      ]
+    }
+  ]
+}
