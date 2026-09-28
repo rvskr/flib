@@ -46,7 +46,7 @@ for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
     --disable-avdevice --disable-avfilter --disable-network --disable-autodetect \
     --disable-gpl --disable-nonfree --disable-symver --enable-small \
     --enable-decoder=mpeg4 --enable-parser=mpeg4video --enable-swscale \
-    --extra-cflags='-O2 -fPIC -DANDROID' --extra-ldflags='-Wl,-z,max-page-size=16384' \
+    --extra-cflags='-Os -fPIC -DANDROID' --extra-ldflags='-Wl,-z,max-page-size=16384' \
     "${ARCH_CONFIG[@]}"
   make -j2
   make install

@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include "gl_output.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -24,6 +25,8 @@ constexpr int64_t kMaxFrameLatenessUs = 100000;
 struct Decoder {
   AVCodecContext* context = nullptr;
   SwsContext* scaler = nullptr;
+  GlOutput glOutput;
+  bool glUnavailable = false;
   std::deque<AVFrame*> frames;
   int renderDiagnostics = 0;
   int surfaceDiagnostics = 0;
@@ -298,6 +301,8 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeResetRenderDiagnosti
     JNIEnv*, jclass, jlong handle) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   if (decoder != nullptr) {
+    ReleaseGlOutput(&decoder->glOutput);
+    decoder->glUnavailable = false;
     decoder->renderDiagnostics = 0;
     decoder->surfaceDiagnostics = 0;
     decoder->surfaceConfigured = false;
@@ -338,6 +343,18 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
   }
   if (selected == nullptr) return JNI_FALSE;
 
+  bool glRendered = false;
+  if (!decoder->glUnavailable) {
+    glRendered = RenderGlFrame(&decoder->glOutput, env, surface, selected,
+        &decoder->scaler, &decoder->metricsConvertUs, &decoder->metricsPostUs);
+    if (!glRendered) {
+      decoder->glUnavailable = true;
+      __android_log_print(ANDROID_LOG_WARN, kTag, "falling back to CPU surface output");
+    }
+  }
+  int result = 0;
+  int converted_rows = 0;
+  if (!glRendered) {
   ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
   if (window == nullptr) {
     __android_log_print(ANDROID_LOG_ERROR, kTag, "ANativeWindow_fromSurface failed");
@@ -365,9 +382,8 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
   }
   ANativeWindow_Buffer buffer{};
   const int64_t lockStartUs = MonotonicUs();
-  int result = ANativeWindow_lock(window, &buffer, nullptr);
+  result = ANativeWindow_lock(window, &buffer, nullptr);
   decoder->metricsWindowLockUs += MonotonicUs() - lockStartUs;
-  int converted_rows = 0;
   if (result == 0) {
     AVPixelFormat output_format;
     int bytes_per_pixel;
@@ -425,7 +441,9 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     __android_log_print(ANDROID_LOG_ERROR, kTag, "ANativeWindow_lock failed: %d", result);
   }
   ANativeWindow_release(window);
-  if (result == 0 && converted_rows > 0) {
+  }
+  const bool presented = glRendered || (result == 0 && converted_rows > 0);
+  if (presented) {
     const int64_t postedAtUs = MonotonicUs();
     if (decoder->lastPostUs != 0) {
       const int64_t gapUs = postedAtUs - decoder->lastPostUs;
@@ -452,8 +470,8 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     }
   }
   av_frame_free(&selected);
-  if (result == 0 && converted_rows > 0) decoder->metricsPresentedFrames++;
-  return result == 0 && converted_rows > 0 ? JNI_TRUE : JNI_FALSE;
+  if (presented) decoder->metricsPresentedFrames++;
+  return presented ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -461,6 +479,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRelease(JNIEnv*, jcl
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   if (decoder == nullptr) return;
   ClearFrames(decoder);
+  ReleaseGlOutput(&decoder->glOutput);
   sws_freeContext(decoder->scaler);
   avcodec_free_context(&decoder->context);
   delete decoder;
