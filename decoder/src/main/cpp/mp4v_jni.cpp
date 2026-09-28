@@ -51,6 +51,13 @@ struct Decoder {
   int64_t metricsPtsGapUs = 0;
   int64_t metricsMaxPtsGapUs = 0;
   double metricsPtsGapSquaredUs = 0;
+  int64_t firstPacketPtsUs = AV_NOPTS_VALUE;
+  int64_t previousPacketPtsUs = AV_NOPTS_VALUE;
+  int64_t packetDurationSumUs = 0;
+  uint32_t packetDurationCount = 0;
+  double frameDurationUs = 0;
+  uint64_t outputFrameIndex = 0;
+  int timingDiagnostics = 0;
 };
 
 int64_t MonotonicUs() {
@@ -140,7 +147,24 @@ int ReceiveFrames(Decoder* decoder) {
       av_frame_free(&frame);
       return result;
     }
-    if (frame->best_effort_timestamp != AV_NOPTS_VALUE) frame->pts = frame->best_effort_timestamp;
+    const int64_t originalPtsUs = frame->best_effort_timestamp;
+    if (decoder->firstPacketPtsUs != AV_NOPTS_VALUE && decoder->frameDurationUs > 0) {
+      // AVI MPEG-4 packet timestamps can follow decode order even when FFmpeg
+      // outputs B-frames in display order. Assign display-order timestamps from
+      // the stable packet cadence so the renderer does not alternate between
+      // long waits and bursts of frames.
+      frame->pts = decoder->firstPacketPtsUs + static_cast<int64_t>(
+          std::llround(decoder->outputFrameIndex * decoder->frameDurationUs));
+      if (decoder->timingDiagnostics++ < 8) {
+        __android_log_print(ANDROID_LOG_INFO, kTag,
+            "normalized frame pts original=%lld display=%lld frameIndex=%llu durationUs=%.2f",
+            static_cast<long long>(originalPtsUs), static_cast<long long>(frame->pts),
+            static_cast<unsigned long long>(decoder->outputFrameIndex), decoder->frameDurationUs);
+      }
+    } else if (originalPtsUs != AV_NOPTS_VALUE) {
+      frame->pts = originalPtsUs;
+    }
+    decoder->outputFrameIndex++;
     decoder->metricsDecodedFrames++;
     if (decoder->frames.size() >= kMaxQueuedFrames) {
       av_frame_free(&decoder->frames.front());
@@ -196,6 +220,23 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeDecode(
   }
   int result = av_new_packet(packet, size);
   if (result >= 0) {
+    if (pts_us != AV_NOPTS_VALUE) {
+      if (decoder->firstPacketPtsUs == AV_NOPTS_VALUE) decoder->firstPacketPtsUs = pts_us;
+      if (decoder->previousPacketPtsUs != AV_NOPTS_VALUE) {
+        const int64_t durationUs = pts_us - decoder->previousPacketPtsUs;
+        if (durationUs >= 8000 && durationUs <= 100000) {
+          // Use several packet intervals to preserve fractional rates such as
+          // 24000/1001 fps without accumulating rounding error.
+          if (decoder->packetDurationCount < 120) {
+            decoder->packetDurationSumUs += durationUs;
+            decoder->packetDurationCount++;
+          }
+          decoder->frameDurationUs = decoder->packetDurationSumUs /
+              static_cast<double>(decoder->packetDurationCount);
+        }
+      }
+      decoder->previousPacketPtsUs = pts_us;
+    }
     memcpy(packet->data, bytes + offset, size);
     packet->pts = pts_us;
     packet->dts = AV_NOPTS_VALUE;
@@ -229,6 +270,13 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeFlush(JNIEnv*, jclas
     avcodec_flush_buffers(decoder->context);
     decoder->lastPostUs = 0;
     decoder->lastPresentedPtsUs = AV_NOPTS_VALUE;
+    decoder->firstPacketPtsUs = AV_NOPTS_VALUE;
+    decoder->previousPacketPtsUs = AV_NOPTS_VALUE;
+    decoder->packetDurationSumUs = 0;
+    decoder->packetDurationCount = 0;
+    decoder->frameDurationUs = 0;
+    decoder->outputFrameIndex = 0;
+    decoder->timingDiagnostics = 0;
   }
 }
 
