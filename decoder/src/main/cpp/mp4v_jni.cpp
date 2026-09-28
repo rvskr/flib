@@ -4,6 +4,7 @@
 #include <jni.h>
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -30,7 +31,57 @@ struct Decoder {
   bool surfaceConfigured = false;
   int surfaceWidth = 0;
   int surfaceHeight = 0;
+  int64_t metricsStartUs = 0;
+  uint64_t metricsRenderCalls = 0;
+  uint64_t metricsDecodedFrames = 0;
+  uint64_t metricsPresentedFrames = 0;
+  uint64_t metricsLateDrops = 0;
+  uint64_t metricsDecodeCalls = 0;
+  int64_t metricsDecodeUs = 0;
+  int64_t metricsWindowLockUs = 0;
+  int64_t metricsConvertUs = 0;
+  int64_t metricsPostUs = 0;
 };
+
+int64_t MonotonicUs() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void MaybeLogMetrics(Decoder* decoder) {
+  const int64_t now = MonotonicUs();
+  if (decoder->metricsStartUs == 0) {
+    decoder->metricsStartUs = now;
+    return;
+  }
+  const int64_t elapsed = now - decoder->metricsStartUs;
+  if (elapsed < 2000000) return;
+  const double seconds = elapsed / 1000000.0;
+  __android_log_print(ANDROID_LOG_INFO, kTag,
+      "perf intervalMs=%lld renderCallsPerSec=%.1f decodedFps=%.1f presentedFps=%.1f "
+      "lateDrops=%llu queue=%zu avgDecodeMs=%.2f avgLockMs=%.2f avgConvertMs=%.2f avgPostMs=%.2f",
+      static_cast<long long>(elapsed / 1000), decoder->metricsRenderCalls / seconds,
+      decoder->metricsDecodedFrames / seconds, decoder->metricsPresentedFrames / seconds,
+      static_cast<unsigned long long>(decoder->metricsLateDrops), decoder->frames.size(),
+      decoder->metricsDecodeCalls == 0 ? 0.0
+          : decoder->metricsDecodeUs / 1000.0 / decoder->metricsDecodeCalls,
+      decoder->metricsPresentedFrames == 0 ? 0.0
+          : decoder->metricsWindowLockUs / 1000.0 / decoder->metricsPresentedFrames,
+      decoder->metricsPresentedFrames == 0 ? 0.0
+          : decoder->metricsConvertUs / 1000.0 / decoder->metricsPresentedFrames,
+      decoder->metricsPresentedFrames == 0 ? 0.0
+          : decoder->metricsPostUs / 1000.0 / decoder->metricsPresentedFrames);
+  decoder->metricsStartUs = now;
+  decoder->metricsRenderCalls = 0;
+  decoder->metricsDecodedFrames = 0;
+  decoder->metricsPresentedFrames = 0;
+  decoder->metricsLateDrops = 0;
+  decoder->metricsDecodeCalls = 0;
+  decoder->metricsDecodeUs = 0;
+  decoder->metricsWindowLockUs = 0;
+  decoder->metricsConvertUs = 0;
+  decoder->metricsPostUs = 0;
+}
 
 void ClearFrames(Decoder* decoder) {
   while (!decoder->frames.empty()) {
@@ -54,6 +105,7 @@ int ReceiveFrames(Decoder* decoder) {
       return result;
     }
     if (frame->best_effort_timestamp != AV_NOPTS_VALUE) frame->pts = frame->best_effort_timestamp;
+    decoder->metricsDecodedFrames++;
     if (decoder->frames.size() >= kMaxQueuedFrames) {
       av_frame_free(&decoder->frames.front());
       decoder->frames.pop_front();
@@ -99,8 +151,13 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeDecode(
       offset > capacity || size > capacity - offset) {
     return AVERROR(EINVAL);
   }
+  const int64_t decodeStartUs = MonotonicUs();
   AVPacket* packet = av_packet_alloc();
-  if (packet == nullptr) return AVERROR(ENOMEM);
+  if (packet == nullptr) {
+    decoder->metricsDecodeCalls++;
+    decoder->metricsDecodeUs += MonotonicUs() - decodeStartUs;
+    return AVERROR(ENOMEM);
+  }
   int result = av_new_packet(packet, size);
   if (result >= 0) {
     memcpy(packet->data, bytes + offset, size);
@@ -111,9 +168,14 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeDecode(
   av_packet_free(&packet);
   if (result < 0) {
     __android_log_print(ANDROID_LOG_WARN, kTag, "send packet failed: %d", result);
+    decoder->metricsDecodeCalls++;
+    decoder->metricsDecodeUs += MonotonicUs() - decodeStartUs;
     return result;
   }
-  return ReceiveFrames(decoder);
+  result = ReceiveFrames(decoder);
+  decoder->metricsDecodeCalls++;
+  decoder->metricsDecodeUs += MonotonicUs() - decodeStartUs;
+  return result;
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -157,7 +219,10 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     JNIEnv* env, jclass, jlong handle, jobject surface, jlong position_us, jlong late_us) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
-  if (decoder == nullptr || surface == nullptr || decoder->frames.empty()) return JNI_FALSE;
+  if (decoder == nullptr) return JNI_FALSE;
+  decoder->metricsRenderCalls++;
+  MaybeLogMetrics(decoder);
+  if (surface == nullptr || decoder->frames.empty()) return JNI_FALSE;
   AVFrame* selected = nullptr;
   const int64_t due = position_us + late_us;
   if (!decoder->frames.empty() && decoder->renderDiagnostics++ < 8) {
@@ -172,6 +237,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     if (frame->pts != AV_NOPTS_VALUE && frame->pts < position_us - kMaxFrameLatenessUs) {
       decoder->frames.pop_front();
       av_frame_free(&frame);
+      decoder->metricsLateDrops++;
       continue;
     }
     if (frame->pts != AV_NOPTS_VALUE && frame->pts > due) break;
@@ -207,7 +273,9 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
         selected->width, selected->height);
   }
   ANativeWindow_Buffer buffer{};
+  const int64_t lockStartUs = MonotonicUs();
   int result = ANativeWindow_lock(window, &buffer, nullptr);
+  decoder->metricsWindowLockUs += MonotonicUs() - lockStartUs;
   int converted_rows = 0;
   if (result == 0) {
     AVPixelFormat output_format;
@@ -246,12 +314,16 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
       if (decoder->scaler != nullptr) {
         uint8_t* dst[4] = {static_cast<uint8_t*>(buffer.bits), nullptr, nullptr, nullptr};
         int stride[4] = {buffer.stride * bytes_per_pixel, 0, 0, 0};
+      const int64_t convertStartUs = MonotonicUs();
         converted_rows = sws_scale(
             decoder->scaler, selected->data, selected->linesize, 0, selected->height, dst, stride);
+      decoder->metricsConvertUs += MonotonicUs() - convertStartUs;
       } else {
         __android_log_print(ANDROID_LOG_ERROR, kTag, "sws_getCachedContext failed");
       }
+      const int64_t postStartUs = MonotonicUs();
       const int post_result = ANativeWindow_unlockAndPost(window);
+      decoder->metricsPostUs += MonotonicUs() - postStartUs;
       if (post_result != 0) {
         __android_log_print(ANDROID_LOG_ERROR, kTag,
             "ANativeWindow_unlockAndPost failed: %d", post_result);
@@ -263,6 +335,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
   }
   ANativeWindow_release(window);
   av_frame_free(&selected);
+  if (result == 0 && converted_rows > 0) decoder->metricsPresentedFrames++;
   return result == 0 && converted_rows > 0 ? JNI_TRUE : JNI_FALSE;
 }
 
