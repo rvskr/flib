@@ -348,6 +348,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     glRendered = RenderGlFrame(&decoder->glOutput, env, surface, selected,
         &decoder->scaler, &decoder->metricsConvertUs, &decoder->metricsPostUs);
     if (!glRendered) {
+      ReleaseGlOutput(&decoder->glOutput);
       decoder->glUnavailable = true;
       __android_log_print(ANDROID_LOG_WARN, kTag, "falling back to CPU surface output");
     }
