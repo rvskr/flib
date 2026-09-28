@@ -43,6 +43,14 @@ jobs:
       - name: Build standalone Media3 decoder AAR
         run: ./gradlew :decoder:assembleRelease --no-daemon --max-workers=2
 
+      - name: Validate Maven publication
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          ./gradlew :decoder:publishReleasePublicationToLocalReleaseRepository \
+            -PreleaseVersion=0.1.0-SNAPSHOT \
+            -PpublicationDirectory="$RUNNER_TEMP/flib-maven-validation" \
+            --no-daemon --max-workers=2
+
       - name: Prepare versioned Maven repository
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
