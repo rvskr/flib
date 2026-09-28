@@ -16,7 +16,7 @@ bash build_ffmpeg_android.sh
 ```
 
 The workflow publishes `decoder-release.aar`, the matching FFmpeg source archive,
-and the build script as a downloadable Actions artifact. No AAR is committed to
+the build script, and smaller AARs for individual Android ABIs as a downloadable Actions artifact. No AAR is committed to
 this repository.
 
 ## Integration

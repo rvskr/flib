@@ -43,6 +43,9 @@ jobs:
       - name: Build standalone Media3 decoder AAR
         run: ./gradlew :decoder:assembleRelease --no-daemon --max-workers=2
 
+      - name: Package ABI-specific AARs
+        run: python3 package_abi_aars.py
+
       - name: Package matching FFmpeg source and notices
         run: |
           mkdir -p dist
