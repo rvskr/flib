@@ -45,6 +45,12 @@ struct Decoder {
   int64_t metricsPostGapUs = 0;
   int64_t metricsMaxPostGapUs = 0;
   double metricsPostGapSquaredUs = 0;
+  int64_t lastPresentedPtsUs = AV_NOPTS_VALUE;
+  uint64_t metricsPtsGaps = 0;
+  uint64_t metricsRepeatedPts = 0;
+  int64_t metricsPtsGapUs = 0;
+  int64_t metricsMaxPtsGapUs = 0;
+  double metricsPtsGapSquaredUs = 0;
 };
 
 int64_t MonotonicUs() {
@@ -66,10 +72,16 @@ void MaybeLogMetrics(Decoder* decoder) {
   const double gapVarianceUs = decoder->metricsPostGaps == 0 ? 0.0
       : decoder->metricsPostGapSquaredUs / decoder->metricsPostGaps
           - std::pow(decoder->metricsPostGapUs / static_cast<double>(decoder->metricsPostGaps), 2);
+  const double averagePtsGapMs = decoder->metricsPtsGaps == 0 ? 0.0
+      : decoder->metricsPtsGapUs / 1000.0 / decoder->metricsPtsGaps;
+  const double ptsGapVarianceUs = decoder->metricsPtsGaps == 0 ? 0.0
+      : decoder->metricsPtsGapSquaredUs / decoder->metricsPtsGaps
+          - std::pow(decoder->metricsPtsGapUs / static_cast<double>(decoder->metricsPtsGaps), 2);
   __android_log_print(ANDROID_LOG_INFO, kTag,
       "perf intervalMs=%lld renderCallsPerSec=%.1f decodedFps=%.1f presentedFps=%.1f "
       "lateDrops=%llu queue=%zu avgDecodeMs=%.2f avgLockMs=%.2f avgConvertMs=%.2f avgPostMs=%.2f "
-      "avgFrameGapMs=%.2f maxFrameGapMs=%.2f frameGapStdMs=%.2f",
+      "avgFrameGapMs=%.2f maxFrameGapMs=%.2f frameGapStdMs=%.2f "
+      "avgPtsGapMs=%.2f maxPtsGapMs=%.2f ptsGapStdMs=%.2f repeatedPts=%llu",
       static_cast<long long>(elapsed / 1000), decoder->metricsRenderCalls / seconds,
       decoder->metricsDecodedFrames / seconds, decoder->metricsPresentedFrames / seconds,
       static_cast<unsigned long long>(decoder->metricsLateDrops), decoder->frames.size(),
@@ -82,7 +94,10 @@ void MaybeLogMetrics(Decoder* decoder) {
       decoder->metricsPresentedFrames == 0 ? 0.0
           : decoder->metricsPostUs / 1000.0 / decoder->metricsPresentedFrames,
       averageGapMs, decoder->metricsMaxPostGapUs / 1000.0,
-      std::sqrt(std::max(0.0, gapVarianceUs)) / 1000.0);
+      std::sqrt(std::max(0.0, gapVarianceUs)) / 1000.0,
+      averagePtsGapMs, decoder->metricsMaxPtsGapUs / 1000.0,
+      std::sqrt(std::max(0.0, ptsGapVarianceUs)) / 1000.0,
+      static_cast<unsigned long long>(decoder->metricsRepeatedPts));
   decoder->metricsStartUs = now;
   decoder->metricsRenderCalls = 0;
   decoder->metricsDecodedFrames = 0;
@@ -97,6 +112,11 @@ void MaybeLogMetrics(Decoder* decoder) {
   decoder->metricsPostGapUs = 0;
   decoder->metricsMaxPostGapUs = 0;
   decoder->metricsPostGapSquaredUs = 0;
+  decoder->metricsPtsGaps = 0;
+  decoder->metricsRepeatedPts = 0;
+  decoder->metricsPtsGapUs = 0;
+  decoder->metricsMaxPtsGapUs = 0;
+  decoder->metricsPtsGapSquaredUs = 0;
 }
 
 void ClearFrames(Decoder* decoder) {
@@ -208,6 +228,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeFlush(JNIEnv*, jclas
     ClearFrames(decoder);
     avcodec_flush_buffers(decoder->context);
     decoder->lastPostUs = 0;
+    decoder->lastPresentedPtsUs = AV_NOPTS_VALUE;
   }
 }
 
@@ -233,6 +254,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeResetRenderDiagnosti
     decoder->surfaceDiagnostics = 0;
     decoder->surfaceConfigured = false;
     decoder->lastPostUs = 0;
+    decoder->lastPresentedPtsUs = AV_NOPTS_VALUE;
   }
 }
 
@@ -367,6 +389,19 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
       }
     }
     decoder->lastPostUs = postedAtUs;
+    if (selected->pts != AV_NOPTS_VALUE) {
+      if (decoder->lastPresentedPtsUs != AV_NOPTS_VALUE) {
+        const int64_t ptsGapUs = selected->pts - decoder->lastPresentedPtsUs;
+        if (ptsGapUs >= 0 && ptsGapUs < 1000000) {
+          decoder->metricsPtsGaps++;
+          decoder->metricsPtsGapUs += ptsGapUs;
+          decoder->metricsMaxPtsGapUs = std::max(decoder->metricsMaxPtsGapUs, ptsGapUs);
+          decoder->metricsPtsGapSquaredUs += static_cast<double>(ptsGapUs) * ptsGapUs;
+          if (ptsGapUs == 0) decoder->metricsRepeatedPts++;
+        }
+      }
+      decoder->lastPresentedPtsUs = selected->pts;
+    }
   }
   av_frame_free(&selected);
   if (result == 0 && converted_rows > 0) decoder->metricsPresentedFrames++;
