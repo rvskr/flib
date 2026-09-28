@@ -24,7 +24,7 @@ with ZipFile(SOURCE) as source:
                 ):
                     continue
                 output.writestr(
-                    entry,
+                    entry.filename,
                     source.read(entry.filename),
                     compress_type=ZIP_DEFLATED,
                     compresslevel=9,
