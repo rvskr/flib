@@ -1,6 +1,0 @@
-.gradle/
-.build/
-**/build/
-decoder/src/main/jniLibs/
-decoder/src/main/ffmpeg-headers/
-dist/
