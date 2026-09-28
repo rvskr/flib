@@ -19,6 +19,7 @@ extern "C" {
 namespace {
 constexpr char kTag[] = "RezkaMp4v";
 constexpr size_t kMaxQueuedFrames = 48;
+constexpr int64_t kMaxFrameLatenessUs = 100000;
 
 struct Decoder {
   AVCodecContext* context = nullptr;
@@ -168,10 +169,15 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
   }
   while (!decoder->frames.empty()) {
     AVFrame* frame = decoder->frames.front();
+    if (frame->pts != AV_NOPTS_VALUE && frame->pts < position_us - kMaxFrameLatenessUs) {
+      decoder->frames.pop_front();
+      av_frame_free(&frame);
+      continue;
+    }
     if (frame->pts != AV_NOPTS_VALUE && frame->pts > due) break;
     decoder->frames.pop_front();
-    if (selected != nullptr) av_frame_free(&selected);
     selected = frame;
+    break;
   }
   if (selected == nullptr) return JNI_FALSE;
 
