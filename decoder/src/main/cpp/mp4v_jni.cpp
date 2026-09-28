@@ -179,7 +179,7 @@ int ReceiveFrames(Decoder* decoder) {
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeCreate(
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeCreate(
     JNIEnv* env, jclass, jbyteArray extra_data, jint threads) {
   const AVCodec* codec = avcodec_find_decoder_by_name("mpeg4");
   if (codec == nullptr) return 0;
@@ -205,7 +205,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeCreate(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeDecode(
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeDecode(
     JNIEnv* env, jclass, jlong handle, jobject input, jint offset, jint size, jlong pts_us) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   auto* bytes = static_cast<uint8_t*>(env->GetDirectBufferAddress(input));
@@ -259,14 +259,14 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeDecode(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeSignalEndOfStream(
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeSignalEndOfStream(
     JNIEnv*, jclass, jlong handle) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   if (decoder != nullptr && avcodec_send_packet(decoder->context, nullptr) >= 0) ReceiveFrames(decoder);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeFlush(JNIEnv*, jclass, jlong handle) {
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeFlush(JNIEnv*, jclass, jlong handle) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   if (decoder != nullptr) {
     ClearFrames(decoder);
@@ -284,20 +284,20 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeFlush(JNIEnv*, jclas
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeHasFrames(JNIEnv*, jclass, jlong handle) {
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeHasFrames(JNIEnv*, jclass, jlong handle) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   return decoder != nullptr && !decoder->frames.empty();
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeGetQueuedFrames(
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeGetQueuedFrames(
     JNIEnv*, jclass, jlong handle) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   return decoder == nullptr ? 0 : static_cast<jint>(decoder->frames.size());
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeResetRenderDiagnostics(
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeResetRenderDiagnostics(
     JNIEnv*, jclass, jlong handle) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   if (decoder != nullptr) {
@@ -312,7 +312,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeResetRenderDiagnosti
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
     JNIEnv* env, jclass, jlong handle, jobject surface, jlong position_us, jlong late_us) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   if (decoder == nullptr) return JNI_FALSE;
@@ -476,7 +476,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRelease(JNIEnv*, jclass, jlong handle) {
+Java_io_github_rvskr_flib_mpeg4_Mpeg4SoftwareVideoRenderer_nativeRelease(JNIEnv*, jclass, jlong handle) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
   if (decoder == nullptr) return;
   ClearFrames(decoder);

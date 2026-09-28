@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "rezka-mpeg4-decoder"
+rootProject.name = "flib"
 include(":decoder")

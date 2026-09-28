@@ -1,4 +1,4 @@
-package rezkatv.mpeg4.decoder;
+package io.github.rvskr.flib.mpeg4;
 
 import android.os.Handler;
 import android.os.Build;

@@ -16,13 +16,27 @@ bash build_ffmpeg_android.sh
 ```
 
 The workflow publishes `decoder-release.aar`, the matching FFmpeg source archive,
-the build script, and smaller AARs for individual Android ABIs as a downloadable Actions artifact. No AAR is committed to
-this repository.
+the build script, and smaller AARs for individual Android ABIs as an Actions artifact.
+Version tags also publish a Maven repository in the `maven` branch.
 
 ## Integration
 
-Add the AAR as a dependency and create `Mpeg4RenderersFactory(context, force)`
-for Media3's `ExoPlayer.Builder.setRenderersFactory(...)`. Set `force` to `true`
+Add the public Maven repository and a versioned dependency (no GitHub token):
+
+```groovy
+repositories {
+    google()
+    mavenCentral()
+    maven { url = uri('https://raw.githubusercontent.com/rvskr/flib/maven') }
+}
+
+dependencies {
+    implementation 'io.github.rvskr.flib:mpeg4-decoder:0.1.0'
+}
+```
+
+Use `io.github.rvskr.flib.mpeg4.Mpeg4RenderersFactory(context, force)` with
+Media3's `ExoPlayer.Builder.setRenderersFactory(...)`. Set `force` to `true`
 to prefer the software renderer for `video/mp4v-es`; otherwise it is available
 after Media3's standard renderers.
 
