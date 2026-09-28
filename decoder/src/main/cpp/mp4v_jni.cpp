@@ -6,11 +6,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <mutex>
-#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -43,9 +40,11 @@ struct Decoder {
   int64_t metricsWindowLockUs = 0;
   int64_t metricsConvertUs = 0;
   int64_t metricsPostUs = 0;
-  int64_t lastPostedPtsUs = AV_NOPTS_VALUE;
-  std::deque<int64_t> postedFrameIntervalsUs;
-  bool frameRateRequested = false;
+  int64_t lastPostUs = 0;
+  uint64_t metricsPostGaps = 0;
+  int64_t metricsPostGapUs = 0;
+  int64_t metricsMaxPostGapUs = 0;
+  double metricsPostGapSquaredUs = 0;
 };
 
 int64_t MonotonicUs() {
@@ -62,9 +61,15 @@ void MaybeLogMetrics(Decoder* decoder) {
   const int64_t elapsed = now - decoder->metricsStartUs;
   if (elapsed < 2000000) return;
   const double seconds = elapsed / 1000000.0;
+  const double averageGapMs = decoder->metricsPostGaps == 0 ? 0.0
+      : decoder->metricsPostGapUs / 1000.0 / decoder->metricsPostGaps;
+  const double gapVarianceUs = decoder->metricsPostGaps == 0 ? 0.0
+      : decoder->metricsPostGapSquaredUs / decoder->metricsPostGaps
+          - std::pow(decoder->metricsPostGapUs / static_cast<double>(decoder->metricsPostGaps), 2);
   __android_log_print(ANDROID_LOG_INFO, kTag,
       "perf intervalMs=%lld renderCallsPerSec=%.1f decodedFps=%.1f presentedFps=%.1f "
-      "lateDrops=%llu queue=%zu avgDecodeMs=%.2f avgLockMs=%.2f avgConvertMs=%.2f avgPostMs=%.2f",
+      "lateDrops=%llu queue=%zu avgDecodeMs=%.2f avgLockMs=%.2f avgConvertMs=%.2f avgPostMs=%.2f "
+      "avgFrameGapMs=%.2f maxFrameGapMs=%.2f frameGapStdMs=%.2f",
       static_cast<long long>(elapsed / 1000), decoder->metricsRenderCalls / seconds,
       decoder->metricsDecodedFrames / seconds, decoder->metricsPresentedFrames / seconds,
       static_cast<unsigned long long>(decoder->metricsLateDrops), decoder->frames.size(),
@@ -75,7 +80,9 @@ void MaybeLogMetrics(Decoder* decoder) {
       decoder->metricsPresentedFrames == 0 ? 0.0
           : decoder->metricsConvertUs / 1000.0 / decoder->metricsPresentedFrames,
       decoder->metricsPresentedFrames == 0 ? 0.0
-          : decoder->metricsPostUs / 1000.0 / decoder->metricsPresentedFrames);
+          : decoder->metricsPostUs / 1000.0 / decoder->metricsPresentedFrames,
+      averageGapMs, decoder->metricsMaxPostGapUs / 1000.0,
+      std::sqrt(std::max(0.0, gapVarianceUs)) / 1000.0);
   decoder->metricsStartUs = now;
   decoder->metricsRenderCalls = 0;
   decoder->metricsDecodedFrames = 0;
@@ -86,6 +93,10 @@ void MaybeLogMetrics(Decoder* decoder) {
   decoder->metricsWindowLockUs = 0;
   decoder->metricsConvertUs = 0;
   decoder->metricsPostUs = 0;
+  decoder->metricsPostGaps = 0;
+  decoder->metricsPostGapUs = 0;
+  decoder->metricsMaxPostGapUs = 0;
+  decoder->metricsPostGapSquaredUs = 0;
 }
 
 void ClearFrames(Decoder* decoder) {
@@ -93,79 +104,6 @@ void ClearFrames(Decoder* decoder) {
     AVFrame* frame = decoder->frames.front();
     decoder->frames.pop_front();
     av_frame_free(&frame);
-  }
-}
-
-void MaybeRequestDisplayFrameRate(JNIEnv* env, Decoder* decoder, jobject surface,
-                                  int64_t framePtsUs) {
-  if (decoder->frameRateRequested || framePtsUs == AV_NOPTS_VALUE) return;
-  if (decoder->lastPostedPtsUs != AV_NOPTS_VALUE) {
-    const int64_t intervalUs = framePtsUs - decoder->lastPostedPtsUs;
-    // Ignore repeats, discontinuities, and very low-rate content. Keep enough
-    // recent intervals to avoid choosing a refresh rate from startup catch-up.
-    if (intervalUs >= 8000 && intervalUs <= 100000) {
-      decoder->postedFrameIntervalsUs.push_back(intervalUs);
-      if (decoder->postedFrameIntervalsUs.size() > 9) {
-        decoder->postedFrameIntervalsUs.pop_front();
-      }
-    } else if (intervalUs < 0 || intervalUs > 250000) {
-      decoder->postedFrameIntervalsUs.clear();
-    }
-  }
-  decoder->lastPostedPtsUs = framePtsUs;
-  if (decoder->postedFrameIntervalsUs.size() < 8) return;
-
-  std::vector<int64_t> sorted(decoder->postedFrameIntervalsUs.begin(),
-                              decoder->postedFrameIntervalsUs.end());
-  std::sort(sorted.begin(), sorted.end());
-  const int64_t medianUs = sorted[sorted.size() / 2];
-  int inliers = 0;
-  for (const int64_t interval : sorted) {
-    if (std::llabs(interval - medianUs) <= std::max<int64_t>(1000, medianUs / 20)) {
-      ++inliers;
-    }
-  }
-  const float frameRate = 1000000.0f / medianUs;
-  if (inliers < 7 || frameRate < 15.0f || frameRate > 60.0f) return;
-
-  jclass versionClass = env->FindClass("android/os/Build$VERSION");
-  if (versionClass == nullptr) {
-    env->ExceptionClear();
-    decoder->frameRateRequested = true;
-    return;
-  }
-  const jfieldID sdkField = env->GetStaticFieldID(versionClass, "SDK_INT", "I");
-  const jint sdk = sdkField == nullptr ? 0 : env->GetStaticIntField(versionClass, sdkField);
-  env->DeleteLocalRef(versionClass);
-  if (sdk < 30) {
-    decoder->frameRateRequested = true;
-    __android_log_print(ANDROID_LOG_INFO, kTag,
-        "display frame-rate hint skipped: Android API %d", sdk);
-    return;
-  }
-
-  jclass surfaceClass = env->GetObjectClass(surface);
-  const jmethodID setFrameRate = env->GetMethodID(surfaceClass, "setFrameRate", "(FI)V");
-  if (setFrameRate != nullptr) {
-    // FRAME_RATE_COMPATIBILITY_FIXED_SOURCE: this surface contains video at
-    // the measured cadence; Android may select a matching display mode.
-    env->CallVoidMethod(surface, setFrameRate, frameRate, 1);
-  }
-  env->DeleteLocalRef(surfaceClass);
-  if (env->ExceptionCheck()) {
-    env->ExceptionClear();
-    decoder->frameRateRequested = true;
-    __android_log_print(ANDROID_LOG_WARN, kTag,
-        "Surface.setFrameRate(%.3f) failed", frameRate);
-  } else if (setFrameRate != nullptr) {
-    decoder->frameRateRequested = true;
-    __android_log_print(ANDROID_LOG_INFO, kTag,
-        "requested display frame rate %.3f fps (median frame interval %lld us)",
-        frameRate, static_cast<long long>(medianUs));
-  } else {
-    decoder->frameRateRequested = true;
-    __android_log_print(ANDROID_LOG_WARN, kTag,
-        "Surface.setFrameRate unavailable on API %d", sdk);
   }
 }
 
@@ -266,7 +204,11 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeSignalEndOfStream(
 extern "C" JNIEXPORT void JNICALL
 Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeFlush(JNIEnv*, jclass, jlong handle) {
   auto* decoder = reinterpret_cast<Decoder*>(handle);
-  if (decoder != nullptr) { ClearFrames(decoder); avcodec_flush_buffers(decoder->context); }
+  if (decoder != nullptr) {
+    ClearFrames(decoder);
+    avcodec_flush_buffers(decoder->context);
+    decoder->lastPostUs = 0;
+  }
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -290,9 +232,7 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeResetRenderDiagnosti
     decoder->renderDiagnostics = 0;
     decoder->surfaceDiagnostics = 0;
     decoder->surfaceConfigured = false;
-    decoder->lastPostedPtsUs = AV_NOPTS_VALUE;
-    decoder->postedFrameIntervalsUs.clear();
-    decoder->frameRateRequested = false;
+    decoder->lastPostUs = 0;
   }
 }
 
@@ -416,7 +356,17 @@ Java_rezkatv_mpeg4_decoder_Mpeg4SoftwareVideoRenderer_nativeRenderFrame(
   }
   ANativeWindow_release(window);
   if (result == 0 && converted_rows > 0) {
-    MaybeRequestDisplayFrameRate(env, decoder, surface, selected->pts);
+    const int64_t postedAtUs = MonotonicUs();
+    if (decoder->lastPostUs != 0) {
+      const int64_t gapUs = postedAtUs - decoder->lastPostUs;
+      if (gapUs > 0 && gapUs < 1000000) {
+        decoder->metricsPostGaps++;
+        decoder->metricsPostGapUs += gapUs;
+        decoder->metricsMaxPostGapUs = std::max(decoder->metricsMaxPostGapUs, gapUs);
+        decoder->metricsPostGapSquaredUs += static_cast<double>(gapUs) * gapUs;
+      }
+    }
+    decoder->lastPostUs = postedAtUs;
   }
   av_frame_free(&selected);
   if (result == 0 && converted_rows > 0) decoder->metricsPresentedFrames++;

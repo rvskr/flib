@@ -1,6 +1,7 @@
 package rezkatv.mpeg4.decoder;
 
 import android.os.Handler;
+import android.os.Build;
 import android.os.SystemClock;
 import android.view.Surface;
 import android.util.Log;
@@ -45,6 +46,14 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   private int sampleCount;
   private int renderAttemptCount;
   private boolean renderedFirstFrame;
+  private float playbackSpeed = 1f;
+  private float sourceFrameRate;
+  private long previousSamplePtsUs = C.TIME_UNSET;
+  private long cadenceDurationSumUs;
+  private long cadenceDurationUs;
+  private int cadenceMatches;
+  @Nullable private Surface hintedSurface;
+  private float hintedFrameRate;
 
   public Mpeg4SoftwareVideoRenderer(
       long allowedJoiningTimeMs,
@@ -96,6 +105,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
         if (bytes == null || !bytes.isDirect() || bytes.remaining() > MAX_SAMPLE_BYTES) {
           throw new IllegalStateException("Invalid or oversized MPEG-4 sample");
         }
+        observeSampleTimestamp(sampleBuffer.timeUs);
         int decoded = nativeDecode(decoder, bytes, bytes.position(), bytes.remaining(),
             sampleBuffer.timeUs);
         if (decoded < 0) throw new IllegalStateException("FFmpeg MPEG-4 decode failed: " + decoded);
@@ -115,6 +125,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
 
   private void onSampleFormatChanged(@Nullable Format newFormat) throws ExoPlaybackException {
     long initStartMs = SystemClock.elapsedRealtime();
+    clearFrameRateHint();
     format = newFormat;
     if (format == null || !MimeTypes.VIDEO_MP4V.equals(format.sampleMimeType)) {
       throw createRendererException(new IllegalArgumentException("Unexpected video format"),
@@ -134,6 +145,13 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
       events.videoSizeChanged(new VideoSize(format.width, format.height, format.pixelWidthHeightRatio));
     }
     sampleCount = 0;
+    previousSamplePtsUs = C.TIME_UNSET;
+    cadenceDurationSumUs = 0;
+    cadenceDurationUs = 0;
+    cadenceMatches = 0;
+    sourceFrameRate = format.frameRate > 0f && format.frameRate <= 120f
+        ? format.frameRate : 0f;
+    applyFrameRateHint();
     Log.i(TAG, "configured mime=" + format.sampleMimeType + " size=" + format.width + "x"
         + format.height + " decoder=" + decoder + " initData="
         + (extraData == null ? 0 : extraData.length));
@@ -141,7 +159,11 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
 
   private void renderAvailableFrame(long positionUs) {
     if (surface == null || decoder == 0) return;
-    boolean rendered = nativeRenderFrame(decoder, surface, positionUs, 35_000);
+    // Leave roughly one render iteration plus a display refresh for the
+    // compositor. A fixed 35 ms media-time lead can publish a 24 fps frame
+    // almost one whole frame early, especially at increased playback speed.
+    long presentationLeadUs = (long) (12_000f * playbackSpeed);
+    boolean rendered = nativeRenderFrame(decoder, surface, positionUs, presentationLeadUs);
     if (renderAttemptCount < 3) {
       Log.i(TAG, "surface render attempt=" + (renderAttemptCount + 1) + " rendered=" + rendered
           + " valid=" + surface.isValid() + " queued=" + nativeHasFrames(decoder)
@@ -155,6 +177,71 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
     }
   }
 
+  private void observeSampleTimestamp(long ptsUs) {
+    if (ptsUs == C.TIME_UNSET) return;
+    if (previousSamplePtsUs != C.TIME_UNSET && sourceFrameRate == 0f) {
+      long durationUs = ptsUs - previousSamplePtsUs;
+      if (durationUs >= 8_000 && durationUs <= 100_000) {
+        if (cadenceMatches == 0 ||
+            Math.abs(durationUs - cadenceDurationUs) <= Math.max(1_000, cadenceDurationUs / 20)) {
+          cadenceDurationSumUs += durationUs;
+          cadenceMatches++;
+        } else {
+          cadenceDurationSumUs = durationUs;
+          cadenceMatches = 1;
+        }
+        cadenceDurationUs = cadenceDurationSumUs / cadenceMatches;
+        if (cadenceMatches >= 6) {
+          sourceFrameRate = 1_000_000f / cadenceDurationUs;
+          Log.i(TAG, "inferred source frame rate=" + sourceFrameRate
+              + " from sample interval=" + cadenceDurationUs + "us");
+          applyFrameRateHint();
+        }
+      } else {
+        cadenceDurationSumUs = 0;
+        cadenceDurationUs = 0;
+        cadenceMatches = 0;
+      }
+    }
+    previousSamplePtsUs = ptsUs;
+  }
+
+  private void applyFrameRateHint() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || surface == null ||
+        !surface.isValid() || sourceFrameRate <= 0f) return;
+    float rate = sourceFrameRate * playbackSpeed;
+    if (rate <= 0f || rate > 240f) return;
+    if (surface == hintedSurface && Math.abs(rate - hintedFrameRate) < 0.02f) return;
+    try {
+      surface.setFrameRate(rate, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+      hintedSurface = surface;
+      hintedFrameRate = rate;
+      Log.i(TAG, "requested surface frame rate=" + rate + " source=" + sourceFrameRate
+          + " speed=" + playbackSpeed);
+    } catch (RuntimeException e) {
+      Log.w(TAG, "Surface.setFrameRate failed", e);
+    }
+  }
+
+  private void clearFrameRateHint() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hintedSurface != null &&
+        hintedSurface.isValid()) {
+      try {
+        hintedSurface.setFrameRate(0f, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+      } catch (RuntimeException e) {
+        Log.w(TAG, "Clearing Surface frame rate failed", e);
+      }
+    }
+    hintedSurface = null;
+    hintedFrameRate = 0f;
+  }
+
+  @Override public void setPlaybackSpeed(float currentPlaybackSpeed, float targetPlaybackSpeed) {
+    playbackSpeed = currentPlaybackSpeed;
+    Log.i(TAG, "playback speed=" + currentPlaybackSpeed + " target=" + targetPlaybackSpeed);
+    applyFrameRateHint();
+  }
+
   @Override public boolean isReady() {
     return isSourceReady() || (decoder != 0 && nativeHasFrames(decoder));
   }
@@ -163,11 +250,13 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
 
   @Override public void handleMessage(int messageType, @Nullable Object message) {
     if (messageType == MSG_SET_VIDEO_OUTPUT) {
+      clearFrameRateHint();
       surface = message instanceof Surface ? (Surface) message : null;
       renderAttemptCount = 0;
       renderedFirstFrame = false;
       Log.i(TAG, "video output=" + (surface == null ? "null" : "Surface(valid=" + surface.isValid() + ")"));
       if (decoder != 0) nativeResetRenderDiagnostics(decoder);
+      applyFrameRateHint();
     }
   }
 
@@ -195,11 +284,16 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
     if (decoder != 0) nativeFlush(decoder);
     sampleCount = 0;
     renderedFirstFrame = false;
+    previousSamplePtsUs = C.TIME_UNSET;
+    cadenceDurationSumUs = 0;
+    cadenceDurationUs = 0;
+    cadenceMatches = 0;
   }
 
   @Override protected void onDisabled() {
     // ExoPlayer may reuse this renderer when a source error is recovered. The
     // video output message is not necessarily sent again for the same Surface.
+    clearFrameRateHint();
     format = null;
     inputEnded = false;
     outputEnded = false;
@@ -213,6 +307,7 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
 
   @Override protected void onRelease() {
     onReset();
+    clearFrameRateHint();
     surface = null;
   }
 
