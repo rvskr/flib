@@ -178,6 +178,9 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   @Override protected void onStreamChanged(
       Format[] formats, long startPositionUs, long offsetUs, MediaSource.MediaPeriodId mediaPeriodId)
       throws ExoPlaybackException {
+    inputEnded = false;
+    outputEnded = false;
+    renderedFirstFrame = false;
     if (formats.length > 0) {
       Log.i(TAG, "stream changed mime=" + formats[0].sampleMimeType + " size="
           + formats[0].width + "x" + formats[0].height + " offsetUs=" + offsetUs);
@@ -195,7 +198,8 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
   }
 
   @Override protected void onDisabled() {
-    surface = null;
+    // ExoPlayer may reuse this renderer when a source error is recovered. The
+    // video output message is not necessarily sent again for the same Surface.
     format = null;
     inputEnded = false;
     outputEnded = false;
@@ -207,7 +211,10 @@ public final class Mpeg4SoftwareVideoRenderer extends BaseRenderer {
     decoder = 0;
   }
 
-  @Override protected void onRelease() { onReset(); }
+  @Override protected void onRelease() {
+    onReset();
+    surface = null;
+  }
 
   private static byte[] joinInitializationData(List<byte[]> parts) {
     if (parts.isEmpty()) return null;
